@@ -21,16 +21,11 @@ def main():
                 iter.append(num)
             data.append(iter)
 
-    if max == min:
-        mul = 0
-    else:
-        mul = 1.0 / (max - min)
-
-    numframes = 5
+    numframes = len(data)
 
     fig = plt.figure(figsize=(10,10))
     ax = fig.add_subplot(projection='3d')
-    text = ax.text(-2, 0.95,0,s='t = 0',horizontalalignment='left',verticalalignment='top')
+    text = ax.set_title('t = 0')
 
     xs = []
     ys = []
@@ -41,21 +36,20 @@ def main():
                 xs.append(i)
                 ys.append(j)
                 zs.append(k)
-    scat = ax.scatter(xs, ys, zs, marker='o', linewidths=0, alpha=0.25, c=[(val - min) * mul for val in data[1]])
+
+    scat = ax.scatter(xs, ys, zs, marker='o', linewidths=0, alpha=0.25, c=data[0], cmap ='viridis', norm=plt.Normalize(min,max))
 
     ax.set_xlabel('x')
     ax.set_ylabel('y')
     ax.set_zlabel('z')
-    print("backend:", plt.rcParams["backend"])
 
-    ani = animation.FuncAnimation(fig, update_plot, frames=range(0, numframes), interval=1000,
-                                  fargs=(data, scat, ax, text, mul, min))
+    ani = animation.FuncAnimation(fig, update_plot, frames=range(1, numframes), interval=1000,
+                                  fargs=(data, scat, text))
     #ani.save('./animation.gif', writer='imagemagick', fps=30)
     plt.show()
 
-def update_plot(i, data, scat, ax, text, mul, min):
-    scat.set_array([(val - min) * mul for val in data[i]])
-    #print(data[i])
+def update_plot(i, data, scat, text):
+    scat.set_array(data[i])
     text.set_text(f"t = {i}")
     return scat,
 
