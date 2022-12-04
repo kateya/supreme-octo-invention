@@ -1,15 +1,11 @@
-import matplotlib
-matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
-
-n = 2
 
 def main():
     data = []
     min = 0
     max = 0
-    with open("./results_1_32.txt") as file:
+    with open("/Users/user/parallel22/results_32_num.txt") as file:
         for line in file:
             iter = []
             for num in line.split():
@@ -30,12 +26,12 @@ def main():
     xs = []
     ys = []
     zs = []
-    for i in range(33):
-        for j in range(33):
-            for k in range(33):
-                xs.append(i)
-                ys.append(j)
-                zs.append(k)
+    for i in range(32):
+        for j in range(32):
+            for k in range(32):
+                xs.append(i / 32)
+                ys.append(j / 32)
+                zs.append(k / 32)
 
     scat = ax.scatter(xs, ys, zs, marker='o', linewidths=0, alpha=0.25, c=data[0], cmap ='viridis', norm=plt.Normalize(min,max))
 
@@ -43,9 +39,9 @@ def main():
     ax.set_ylabel('y')
     ax.set_zlabel('z')
 
-    ani = animation.FuncAnimation(fig, update_plot, frames=range(1, numframes), interval=1000,
+    ani = animation.FuncAnimation(fig, update_plot, frames=range(0, numframes), interval=800,
                                   fargs=(data, scat, text))
-    #ani.save('./animation.gif', writer='imagemagick', fps=30)
+    #ani.save('./32_num.gif', writer='imagemagick', fps=2)
     plt.show()
 
 def update_plot(i, data, scat, text):
