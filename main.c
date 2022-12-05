@@ -5,7 +5,7 @@
 #include <math.h>
 #include <mpi.h>
 
-const int N = 129;
+const int N = 32;
 const int K = 1000;
 
 double f1(double l_x, double l_y, double l_z, double x, double y, double z) {
@@ -16,10 +16,8 @@ double f2(double alpha, double t) {
     return cos(alpha * t + M_PI);
 }
 
-double laplas(double *arr, int i, int j, int k, double h) {
-    return (arr[i-1 + j * N + k * N * N] + arr[i+1 + j * N + k * N * N] +
-           arr[i + (j-1) * N + k * N * N] + arr[i + (j+1) * N + k * N * N] +
-           arr[i + j * N + (k-1) * N * N] + arr[i + j * N + (k+1) * N * N] - 6.0 * arr[i + j * ydim + k * zdim * zdim]) / (h * h);
+double laplas(double val, double top, double bottom, double left, double right, double front, double back, double h) {
+    return (top + bottom + left + right + front + back - 6.0 * val) / (h * h);
 }
 
 int main(int argc, char* argv[]) {
@@ -35,7 +33,7 @@ int main(int argc, char* argv[]) {
     int rank, size;
     MPI_Comm comm;
     int dim[3], period[3], reorder;
-    int coord[3], id;
+    int coord[3];
 
     MPI_Init(&argc, &argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
@@ -52,78 +50,94 @@ int main(int argc, char* argv[]) {
     int ydim = N / dim[1];
     int zdim = N / dim[2];
 
+    //printf("%d, %d, %d\n", xdim, ydim, zdim);
+
     double *analytical1;
     double *grid_1;
     double *grid_2;
     analytical1 = malloc(sizeof(l_x) * xdim * ydim * zdim);
     grid_1 = malloc(sizeof(l_x) * xdim * ydim * zdim);
     grid_2 = malloc(sizeof(l_x) * xdim * ydim * zdim);
-    // u_0 and analytical
-    for (int i = 0; i < xdim; i++)
-        for (int j = 0; j < ydim; j++)
-            for (int k = 0; k < zdim; k++) {
-                double val = f1(l_x, l_y, l_z, (i + xdim * coord[0]) * h, (j + ydim * coord[1]) * h, (k + xdim * coord[2]) * h);
-                analytical1[i + j * ydim + k * zdim * zdim] = val;
-                grid_2[i + j * ydim + k * zdim * zdim] = -val;
-                grid_1[i + j * ydim + k * zdim * zdim] = -val;
-            }
 
     double *top;
-    top = malloc(sizeof(l_x) * xdim * zdim);
+    top = malloc(sizeof(l_x) * ydim * zdim);
     double *bottom;
-    bottom = malloc(sizeof(l_x) * xdim * zdim);
+    bottom = malloc(sizeof(l_x) * ydim * zdim);
     double *front;
     front = malloc(sizeof(l_x) * xdim * ydim);
     double *back;
     back = malloc(sizeof(l_x) * xdim * ydim);
     double *left;
-    left = malloc(sizeof(l_x) * zdim * ydim);
+    left = malloc(sizeof(l_x) * zdim * xdim);
     double *right;
-    right = malloc(sizeof(l_x) * zdim * ydim);
+    right = malloc(sizeof(l_x) * zdim * xdim);
 
     int xsrc, xdst, ysrc, ydst, zsrc, zdst;
 
     MPI_Cart_shift(comm, 0, 1, &xsrc, &xdst);
     MPI_Cart_shift(comm, 1, 1, &ysrc, &ydst);
     MPI_Cart_shift(comm, 2, 1, &zsrc, &zdst);
+    // u_0 and analytical
+    for (int i = 0; i < xdim; i++)
+        for (int j = 0; j < ydim; j++)
+            for (int k = 0; k < zdim; k++) {
+                double val = f1(l_x, l_y, l_z, (i + xdim * coord[0]) * h, (j + ydim * coord[1]) * h, (k + zdim * coord[2]) * h);
+                analytical1[i + j * xdim + k * xdim * ydim] = val;
+                grid_2[i + j * xdim + k * xdim * ydim] = -val;
+                grid_1[i + j * xdim + k * xdim * ydim] = -val;
+                if (i == 0 && xsrc != MPI_PROC_NULL) {
+                    top[j * zdim + k] = -val;
+                }
+                else if (i == xdim-1 && xdst != MPI_PROC_NULL) {
+                    bottom[j * zdim + k] = -val;
+                }
+                if (j == 0 && ysrc != MPI_PROC_NULL) {
+                    left[i * zdim + k] = -val;
+                }
+                else if (j == ydim-1 && ydst != MPI_PROC_NULL) {
+                    right[i * zdim + k] = -val;
+                }
+                if (k == 0 && zsrc != MPI_PROC_NULL) {
+                    front[i * ydim + j] = -val;
+                }
+                else if (k == zdim-1 && zdst != MPI_PROC_NULL) {
+                    back[i * ydim + j] = -val;
+                }
+            }
 
     double t = tau;
-    for (int m = 1; m <= K; t += tau, m++) {
-        double max_delta = 0.0;
+    for (int m = 1; m <= 20; t += tau, m++) {
+        double root_delta, max_delta = 0.0;
         double *tmp;
         tmp = malloc(sizeof(l_x) * xdim * ydim * zdim);
 
         MPI_Status status;
-        if (dim[0] == 2) {
-            if (coord[0] == 0) {
-                MPI_Send(right, ydim * zdim, MPI_DOUBLE, xdst, 0, comm);
-                MPI_Recv(right, ydim * zdim, MPI_DOUBLE, xdst, 0, comm, &status);
-            } else {
-                MPI_Send(left, ydim * zdim, MPI_DOUBLE, xsrc, 0, comm);
-                MPI_Recv(left, ydim * zdim, MPI_DOUBLE, xsrc, 0, comm, &status);
-            }
+        MPI_Request request;
+        if (xsrc == MPI_PROC_NULL && xdst != MPI_PROC_NULL) {
+            MPI_Isend(bottom, ydim * zdim, MPI_DOUBLE, xdst, 0, comm, &request);
+            MPI_Recv(bottom, ydim * zdim, MPI_DOUBLE, xdst, 0, comm, &status);
+        } else if (xsrc != MPI_PROC_NULL && xdst == MPI_PROC_NULL) {
+            MPI_Isend(top, ydim * zdim, MPI_DOUBLE, xsrc, 0, comm, &request);
+            MPI_Recv(top, ydim * zdim, MPI_DOUBLE, xsrc, 0, comm, &status);
         }
-        if (dim[1] == 2) {
-            if (coord[1] == 0) {
-                MPI_Send(bottom, xdim * zdim, MPI_DOUBLE, ydst, 0, comm);
-                MPI_Recv(bottom, xdim * zdim, MPI_DOUBLE, ydst, 0, comm, &status);
-            } else {
-                MPI_Send(top, xdim * zdim, MPI_DOUBLE, ysrc, 0, comm);
-                MPI_Recv(top, xdim * zdim, MPI_DOUBLE, ysrc, 0, comm, &status);
-            }
+        if (ysrc == MPI_PROC_NULL && ydst != MPI_PROC_NULL) {
+            MPI_Isend(right, xdim * zdim, MPI_DOUBLE, ydst, 0, comm, &request);
+            MPI_Recv(right, xdim * zdim, MPI_DOUBLE, ydst, 0, comm, &status);
+        } else if (ysrc != MPI_PROC_NULL && ydst == MPI_PROC_NULL) {
+            MPI_Isend(left, xdim * zdim, MPI_DOUBLE, ysrc, 0, comm, &request);
+            MPI_Recv(left, xdim * zdim, MPI_DOUBLE, ysrc, 0, comm, &status);
         }
-        if (dim[2] == 2) {
-            if (coord[2] == 0) {
-                MPI_Send(front, xdim * ydim, MPI_DOUBLE, zdst, 0, comm);
-                MPI_Recv(front, xdim * ydim, MPI_DOUBLE, zdst, 0, comm, &status);
-            } else {
-                MPI_Send(back, xdim * ydim, MPI_DOUBLE, zsrc, 0, comm);
-                MPI_Recv(back, xdim * ydim, MPI_DOUBLE, zsrc, 0, comm, &status);
-            }
+        if (zsrc == MPI_PROC_NULL && zdst != MPI_PROC_NULL) {
+            MPI_Isend(front, xdim * ydim, MPI_DOUBLE, zdst, 0, comm, &request);
+            MPI_Recv(front, xdim * ydim, MPI_DOUBLE, zdst, 0, comm, &status);
+        } else if ((zsrc != MPI_PROC_NULL && zdst == MPI_PROC_NULL)) {
+            MPI_Isend(back, xdim * ydim, MPI_DOUBLE, zsrc, 0, comm, &request);
+            MPI_Recv(back, xdim * ydim, MPI_DOUBLE, zsrc, 0, comm, &status);
         }
+
         if (xsrc != MPI_PROC_NULL && xdst != MPI_PROC_NULL) {
-            MPI_Sendrecv_replace(top, xdim * zdim, MPI_DOUBLE, xsrc, 0, xdst, 0, comm, &status);
-            MPI_Sendrecv_replace(bottom, xdim * zdim, MPI_DOUBLE, xdst, 0, xsrc, 0, comm, &status);
+            MPI_Sendrecv_replace(top, ydim * zdim, MPI_DOUBLE, xsrc, 0, xdst, 0, comm, &status);
+            MPI_Sendrecv_replace(bottom, ydim * zdim, MPI_DOUBLE, xdst, 0, xsrc, 0, comm, &status);
             double *arr;
             arr = top; top = bottom; bottom = arr;
         }
@@ -134,8 +148,8 @@ int main(int argc, char* argv[]) {
             arr = front; front = back; back = arr;
         }
         if (zsrc != MPI_PROC_NULL && zdst != MPI_PROC_NULL) {
-            MPI_Sendrecv_replace(left, ydim * zdim, MPI_DOUBLE, zsrc, 0, zdst, 0, comm, &status);
-            MPI_Sendrecv_replace(right, ydim * zdim, MPI_DOUBLE, zdst, 0, zsrc, 0, comm, &status);
+            MPI_Sendrecv_replace(left, xdim * zdim, MPI_DOUBLE, zsrc, 0, zdst, 0, comm, &status);
+            MPI_Sendrecv_replace(right, xdim * zdim, MPI_DOUBLE, zdst, 0, zsrc, 0, comm, &status);
             double *arr;
             arr = left; left = right; right = arr;
         }
@@ -143,34 +157,91 @@ int main(int argc, char* argv[]) {
         for (int i = 0; i < xdim; i++)
             for (int j = 0; j < ydim; j++)
                 for (int k = 0; k < zdim; k++) {
-                    // edge of cube
-                    if (i == 0 && coord[0] == 0)
-                        tmp[i + j * ydim + k * zdim * zdim] = analytical1[i + j * ydim + k * zdim * zdim] * f2(alpha, t);
-                    else if (i == N-1 && coord[0] == dim[0] - 1)
-                        tmp[i + j * ydim + k * zdim * zdim] = analytical1[i + j * ydim + k * zdim * zdim] * f2(alpha, t);
-                    else if (j == 0 && coord[1] == 0)
-                        tmp[i + j * ydim + k * zdim * zdim] = analytical1[i + j * ydim + k * zdim * zdim] * f2(alpha, t);
-                    else if (j == N-1 && coord[1] == dim[1] - 1)
-                        tmp[i + j * ydim + k * zdim * zdim] = analytical1[i + j * ydim + k * zdim * zdim] * f2(alpha, t);
-                    else if (k == 0 && coord[2] == 0)
-                        tmp[i + j * ydim + k * zdim * zdim] = 0.0;
-                    else if (k == N-1 && coord[2] == dim[2] - 1)
-                        tmp[i + j * ydim + k * zdim * zdim] = 0.0;
+                    // edge of whole cube
+                    if (i == 0 && xsrc == MPI_PROC_NULL)
+                        tmp[i + j * xdim + k * xdim * ydim] = analytical1[i + j * xdim + k * xdim * ydim] * f2(alpha, t);
+                    else if (i == xdim-1 && xdst == MPI_PROC_NULL)
+                        tmp[i + j * xdim + k * xdim * ydim] = analytical1[i + j * xdim + k * xdim * ydim] * f2(alpha, t);
+                    else if (j == 0 && ysrc == MPI_PROC_NULL)
+                        tmp[i + j * xdim + k * xdim * ydim] = analytical1[i + j * xdim + k * xdim * ydim] * f2(alpha, t);
+                    else if (j == ydim-1 && ydst == MPI_PROC_NULL)
+                        tmp[i + j * xdim + k * xdim * ydim] = analytical1[i + j * xdim + k * xdim * ydim] * f2(alpha, t);
+                    else if (k == 0 && zsrc == MPI_PROC_NULL)
+                        tmp[i + j * xdim + k * xdim * ydim] = 0.0;
+                    else if (k == zdim-1 && zdst == MPI_PROC_NULL)
+                        tmp[i + j * xdim + k * xdim * ydim] = 0.0;
                     else {
-                        double res = 2.0 * grid_1[i + j * ydim + k * zdim * zdim] - grid_2[i + j * ydim + k * zdim * zdim] + tau * tau * laplas(grid_1, i, j, k, h);
-                        tmp[i + j * ydim + k * zdim * zdim] = res;
-                        double delta = fabs(res - analytical1[i + j * ydim + k * zdim * zdim] * f2(alpha, t));
+                        double top_val, bottom_val, right_val, left_val, front_val, back_val;
+                        if (i == 0) {
+                            top_val = top[j * zdim + k];
+                            bottom_val = grid_1[i+1 + j * xdim + k * xdim * ydim];
+                        }
+                        else if (i == xdim-1) {
+                            bottom_val = bottom[j * zdim + k];
+                            top_val = grid_1[i-1 + j * xdim + k * xdim * ydim];
+                        } else {
+                            top_val = grid_1[i-1 + j * xdim + k * xdim * ydim];
+                            bottom_val = grid_1[i+1 + j * xdim + k * xdim * ydim];
+                        }
+                        if (j == 0) {
+                            left_val = left[i * zdim + k];
+                            right_val = grid_1[i + (j+1) * xdim + k * xdim * ydim];
+                        }
+                        else if (j == ydim-1) {
+                            right_val = right[i * zdim + k];
+                            left_val = grid_1[i + (j-1) * xdim + k * xdim * ydim];
+                        } else {
+                            right_val = grid_1[i + (j+1) * xdim + k * xdim * ydim];
+                            left_val = grid_1[i + (j-1) * xdim + k * xdim * ydim];
+                        }
+                        if (k == 0) {
+                            front_val = front[i * ydim + j];
+                            back_val = grid_1[i + j * xdim + (k+1) * xdim * ydim];
+                        }
+                        else if (k == zdim-1) {
+                            back_val = back[i * ydim + j];
+                            front_val = grid_1[i + j * xdim + (k-1) * xdim * ydim];
+                        } else {
+                            back_val = grid_1[i + j * xdim + (k+1) * xdim * ydim];
+                            front_val = grid_1[i + j * xdim + (k-1) * xdim * ydim];
+                        }
+                        double res = 2.0 * grid_1[i + j * xdim + k * xdim * ydim] - grid_2[i + j * xdim + k * xdim * ydim] + \
+                                     tau * tau * laplas(grid_1[i + j * xdim + k * xdim * ydim], top_val, bottom_val, left_val, right_val, front_val, back_val, h);
+                        tmp[i + j * xdim + k * xdim * ydim] = res;
+                        double delta = fabs(res - analytical1[i + j * xdim + k * xdim * ydim] * f2(alpha, t));
                         if (delta > max_delta)
                             max_delta = delta;
+
+                        if (i == 0) {
+                            top[j * zdim + k] = res;
+                        }
+                        else if (i == xdim-1) {
+                            bottom[j * zdim + k] = res;
+                        }
+                        if (j == 0) {
+                            left[i * zdim + k] = res;
+                        }
+                        else if (j == ydim-1) {
+                            right[i * zdim + k] = res;
+                        }
+                        if (k == 0) {
+                            front[i * ydim + j] = res;
+                        }
+                        else if (k == zdim-1) {
+                            back[i * ydim + j] = res;
+                        }
                     }
                 }
-        printf("%f\n", max_delta);
+        MPI_Reduce(&max_delta, &root_delta, 1, MPI_DOUBLE, MPI_MAX, 0, comm);
+        if (rank == 0)
+            printf("t = %d, eps = %f\n", m, root_delta);
         free(grid_2);
         grid_2 = grid_1;
         grid_1 = tmp;
     }
     free(grid_2);
     free(grid_1);
+    free(analytical1);
     free(top);
     free(bottom);
     free(front);
@@ -178,7 +249,6 @@ int main(int argc, char* argv[]) {
     free(left);
     free(right);
     MPI_Comm_free( &comm );
-
     MPI_Finalize();
     return 0;
 }
