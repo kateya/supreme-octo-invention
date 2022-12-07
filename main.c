@@ -4,8 +4,12 @@
 #include <stdlib.h>
 #include <math.h>
 #include <mpi.h>
+#include <omp.h>
 
-const int N = 32;
+#ifndef M_PI
+    #define M_PI 3.14159265358979323846
+#endif
+
 const int K = 1000;
 
 double f1(double l_x, double l_y, double l_z, double x, double y, double z) {
@@ -25,19 +29,21 @@ int main(int argc, char* argv[]) {
     double l_x = strtod(argv[1], &str_end);
     double l_y = strtod(argv[2], &str_end);
     double l_z = strtod(argv[3], &str_end);
+    int N = strtol(argv[4], &str_end, 10);
     double h = l_x / (N - 1);
     double tau = 1.0 / K;
     double alpha = M_PI * sqrt(4.0 / (l_x * l_x) + 4.0 / (l_y * l_y) + 1.0 / (l_z * l_z));
-
+    double time, root_time;
 
     int rank, size;
     MPI_Comm comm;
     int dim[3], period[3], reorder;
     int coord[3];
 
-    MPI_Init(&argc, &argv);
+    MPI_Init(NULL, NULL);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
+    time = MPI_Wtime();
 
     period[0] = 0; period[1] = 0; period[2] = 0;
     dim[0] = 0; dim[1] = 0; dim[2] = 0;
@@ -49,8 +55,6 @@ int main(int argc, char* argv[]) {
     int xdim = N / dim[0];
     int ydim = N / dim[1];
     int zdim = N / dim[2];
-
-    //printf("%d, %d, %d\n", xdim, ydim, zdim);
 
     double *analytical1;
     double *grid_1;
@@ -73,11 +77,11 @@ int main(int argc, char* argv[]) {
     right = malloc(sizeof(l_x) * zdim * xdim);
 
     int xsrc, xdst, ysrc, ydst, zsrc, zdst;
-
     MPI_Cart_shift(comm, 0, 1, &xsrc, &xdst);
     MPI_Cart_shift(comm, 1, 1, &ysrc, &ydst);
     MPI_Cart_shift(comm, 2, 1, &zsrc, &zdst);
-    // u_0 and analytical
+
+    #pragma omp parallel for collapse(3)
     for (int i = 0; i < xdim; i++)
         for (int j = 0; j < ydim; j++)
             for (int k = 0; k < zdim; k++) {
@@ -112,52 +116,63 @@ int main(int argc, char* argv[]) {
         tmp = malloc(sizeof(l_x) * xdim * ydim * zdim);
 
         MPI_Status status;
-        MPI_Request request;
         if (xsrc == MPI_PROC_NULL && xdst != MPI_PROC_NULL) {
-            MPI_Isend(bottom, ydim * zdim, MPI_DOUBLE, xdst, 0, comm, &request);
-            MPI_Recv(bottom, ydim * zdim, MPI_DOUBLE, xdst, 0, comm, &status);
+            MPI_Send(bottom, ydim * zdim, MPI_DOUBLE, xdst, 0, comm);
+            MPI_Recv(top, ydim * zdim, MPI_DOUBLE, xdst, 0, comm, &status);
+            double *arr;
+            arr = top; top = bottom; bottom = arr;
         } else if (xsrc != MPI_PROC_NULL && xdst == MPI_PROC_NULL) {
-            MPI_Isend(top, ydim * zdim, MPI_DOUBLE, xsrc, 0, comm, &request);
-            MPI_Recv(top, ydim * zdim, MPI_DOUBLE, xsrc, 0, comm, &status);
+            MPI_Recv(bottom, ydim * zdim, MPI_DOUBLE, xsrc, 0, comm, &status);
+            MPI_Send(top, ydim * zdim, MPI_DOUBLE, xsrc, 0, comm);
+            double *arr;
+            arr = top; top = bottom; bottom = arr;
         }
         if (ysrc == MPI_PROC_NULL && ydst != MPI_PROC_NULL) {
-            MPI_Isend(right, xdim * zdim, MPI_DOUBLE, ydst, 0, comm, &request);
-            MPI_Recv(right, xdim * zdim, MPI_DOUBLE, ydst, 0, comm, &status);
+            MPI_Send(right, xdim * zdim, MPI_DOUBLE, ydst, 0, comm);
+            MPI_Recv(left, xdim * zdim, MPI_DOUBLE, ydst, 0, comm, &status);
+            double *arr;
+            arr = left; left = right; right = arr;
         } else if (ysrc != MPI_PROC_NULL && ydst == MPI_PROC_NULL) {
-            MPI_Isend(left, xdim * zdim, MPI_DOUBLE, ysrc, 0, comm, &request);
-            MPI_Recv(left, xdim * zdim, MPI_DOUBLE, ysrc, 0, comm, &status);
+            MPI_Recv(right, xdim * zdim, MPI_DOUBLE, ysrc, 0, comm, &status);
+            MPI_Send(left, xdim * zdim, MPI_DOUBLE, ysrc, 0, comm);
+            double *arr;
+            arr = left; left = right; right = arr;
         }
         if (zsrc == MPI_PROC_NULL && zdst != MPI_PROC_NULL) {
-            MPI_Isend(front, xdim * ydim, MPI_DOUBLE, zdst, 0, comm, &request);
+            MPI_Send(back, xdim * ydim, MPI_DOUBLE, zdst, 0, comm);
             MPI_Recv(front, xdim * ydim, MPI_DOUBLE, zdst, 0, comm, &status);
+            double *arr;
+            arr = front; front = back; back = arr;
         } else if ((zsrc != MPI_PROC_NULL && zdst == MPI_PROC_NULL)) {
-            MPI_Isend(back, xdim * ydim, MPI_DOUBLE, zsrc, 0, comm, &request);
             MPI_Recv(back, xdim * ydim, MPI_DOUBLE, zsrc, 0, comm, &status);
+            MPI_Send(front, xdim * ydim, MPI_DOUBLE, zsrc, 0, comm);
+            double *arr;
+            arr = front; front = back; back = arr;
         }
 
         if (xsrc != MPI_PROC_NULL && xdst != MPI_PROC_NULL) {
-            MPI_Sendrecv_replace(top, ydim * zdim, MPI_DOUBLE, xsrc, 0, xdst, 0, comm, &status);
             MPI_Sendrecv_replace(bottom, ydim * zdim, MPI_DOUBLE, xdst, 0, xsrc, 0, comm, &status);
+            MPI_Sendrecv_replace(top, ydim * zdim, MPI_DOUBLE, xsrc, 0, xdst, 0, comm, &status);
             double *arr;
             arr = top; top = bottom; bottom = arr;
         }
         if (ysrc != MPI_PROC_NULL && ydst != MPI_PROC_NULL) {
-            MPI_Sendrecv_replace(front, xdim * ydim, MPI_DOUBLE, ysrc, 0, ydst, 0, comm, &status);
-            MPI_Sendrecv_replace(back, xdim * ydim, MPI_DOUBLE, ydst, 0, ysrc, 0, comm, &status);
-            double *arr;
-            arr = front; front = back; back = arr;
-        }
-        if (zsrc != MPI_PROC_NULL && zdst != MPI_PROC_NULL) {
-            MPI_Sendrecv_replace(left, xdim * zdim, MPI_DOUBLE, zsrc, 0, zdst, 0, comm, &status);
-            MPI_Sendrecv_replace(right, xdim * zdim, MPI_DOUBLE, zdst, 0, zsrc, 0, comm, &status);
+            MPI_Sendrecv_replace(right, xdim * zdim, MPI_DOUBLE, ydst, 0, ysrc, 0, comm, &status);
+            MPI_Sendrecv_replace(left, xdim * zdim, MPI_DOUBLE, ysrc, 0, ydst, 0, comm, &status);
             double *arr;
             arr = left; left = right; right = arr;
         }
+        if (zsrc != MPI_PROC_NULL && zdst != MPI_PROC_NULL) {
+            MPI_Sendrecv_replace(back, xdim * ydim, MPI_DOUBLE, zdst, 0, zsrc, 0, comm, &status);
+            MPI_Sendrecv_replace(front, xdim * ydim, MPI_DOUBLE, zsrc, 0, zdst, 0, comm, &status);
+            double *arr;
+            arr = front; front = back; back = arr;
+        }
 
+        #pragma omp parallel for collapse(3)
         for (int i = 0; i < xdim; i++)
             for (int j = 0; j < ydim; j++)
                 for (int k = 0; k < zdim; k++) {
-                    // edge of whole cube
                     if (i == 0 && xsrc == MPI_PROC_NULL)
                         tmp[i + j * xdim + k * xdim * ydim] = analytical1[i + j * xdim + k * xdim * ydim] * f2(alpha, t);
                     else if (i == xdim-1 && xdst == MPI_PROC_NULL)
@@ -239,6 +254,10 @@ int main(int argc, char* argv[]) {
         grid_2 = grid_1;
         grid_1 = tmp;
     }
+    time = MPI_Wtime() - time;
+    MPI_Reduce(&time, &root_time, 1, MPI_DOUBLE, MPI_MAX, 0, comm);
+    if (rank == 0)
+        printf("N = %d, procs = %d, time = %f\n", N, size, root_time);
     free(grid_2);
     free(grid_1);
     free(analytical1);
