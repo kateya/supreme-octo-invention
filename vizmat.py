@@ -1,11 +1,12 @@
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
+import argparse
 
-def main():
+def main(filename):
     data = []
     min = 0
     max = 0
-    with open("/Users/user/parallel22/results_32_num.txt") as file:
+    with open(filename) as file:
         for line in file:
             iter = []
             for num in line.split():
@@ -49,4 +50,7 @@ def update_plot(i, data, scat, text):
     text.set_text(f"t = {i}")
     return scat,
 
-main()
+parser = argparse.ArgumentParser()
+parser.add_argument('filename')
+args = parser.parse_args()
+main(args.filename)
