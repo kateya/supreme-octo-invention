@@ -40,6 +40,8 @@ def main(filename):
     ax.set_ylabel('y')
     ax.set_zlabel('z')
 
+    cbar = plt.colorbar(scat, fraction=0.030, pad=0.1)
+    cbar.solids.set(alpha=1)
     ani = animation.FuncAnimation(fig, update_plot, frames=range(0, numframes), interval=800,
                                   fargs=(data, scat, text))
     #ani.save('./32_num.gif', writer='imagemagick', fps=2)
